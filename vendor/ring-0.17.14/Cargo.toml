@@ -277,6 +277,11 @@ default-features = false
 version = "0.2.148"
 default-features = false
 
+# QNX (Neutrino) target support: need libc for /dev/urandom based SystemRandom implementation.
+[target.'cfg(target_os = "nto")'.dependencies.libc]
+version = "0.2.155"
+default-features = false
+
 [profile.bench]
 opt-level = 3
 lto = true

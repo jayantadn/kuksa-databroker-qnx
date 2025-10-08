@@ -165,3 +165,40 @@ impl sealed::SecureRandom for SystemRandom {
         getrandom::getrandom(dest).map_err(|_| error::Unspecified)
     }
 }
+
+// QNX Neutrino (target_os = "nto") does not yet have getrandom support in ring's
+// selected configuration; implement a fallback reading directly from /dev/urandom.
+// This mirrors other platforms' historical dev_urandom_fallback behavior while
+// keeping the implementation minimal and constant-time with respect to secret data.
+#[cfg(target_os = "nto")]
+impl sealed::SecureRandom for SystemRandom {
+    fn fill_impl(&self, dest: &mut [u8]) -> Result<(), error::Unspecified> {
+        // Safety: using libc calls directly.
+        use core::ffi::c_int;
+        use core::ptr;
+        extern "C" {
+            fn open(path: *const u8, oflag: c_int, ...) -> c_int;
+            fn read(fd: c_int, buf: *mut core::ffi::c_void, count: usize) -> isize;
+            fn close(fd: c_int) -> c_int;
+        }
+
+        const O_RDONLY: c_int = 0; // QNX uses standard POSIX flags; only need read-only.
+        const URANDOM: &[u8] = b"/dev/urandom\0";
+
+        unsafe {
+            let fd = open(URANDOM.as_ptr(), O_RDONLY);
+            if fd < 0 { return Err(error::Unspecified); }
+            let mut total = 0usize;
+            while total < dest.len() {
+                let ptr = dest.as_mut_ptr().add(total) as *mut core::ffi::c_void;
+                let to_read = dest.len() - total;
+                let n = read(fd, ptr, to_read);
+                if n < 0 { close(fd); return Err(error::Unspecified); }
+                if n == 0 { close(fd); return Err(error::Unspecified); }
+                total += n as usize;
+            }
+            if close(fd) < 0 { return Err(error::Unspecified); }
+        }
+        Ok(())
+    }
+}
