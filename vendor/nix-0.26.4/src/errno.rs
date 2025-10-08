@@ -37,9 +37,9 @@ cfg_if! {
     } else if #[cfg(target_os = "nto")] {
         unsafe fn errno_location() -> *mut c_int {
             extern "C" {
-                fn __errno() -> *mut c_int;
+                fn __get_errno_ptr() -> *mut c_int;
             }
-            __errno()
+            __get_errno_ptr()
         }
     }
 }
