@@ -1,13 +1,8 @@
 use ring::{rand, signature};
-
-use crate::algorithms::Algorithm;
-use crate::errors::Result;
-use crate::serialization::b64_encode;
+use crate::{algorithms::Algorithm, errors::Result, serialization::b64_encode};
 
 /// Only used internally when validating EC, to map from our enum to the Ring EcdsaVerificationAlgorithm structs.
-pub(crate) fn alg_to_ec_verification(
-    alg: Algorithm,
-) -> &'static signature::EcdsaVerificationAlgorithm {
+pub(crate) fn alg_to_ec_verification(alg: Algorithm) -> &'static signature::EcdsaVerificationAlgorithm {
     match alg {
         Algorithm::ES256 => &signature::ECDSA_P256_SHA256_FIXED,
         Algorithm::ES384 => &signature::ECDSA_P384_SHA384_FIXED,
@@ -26,11 +21,9 @@ pub(crate) fn alg_to_ec_signing(alg: Algorithm) -> &'static signature::EcdsaSign
 
 /// The actual ECDSA signing + encoding
 /// The key needs to be in PKCS8 format
-pub fn sign(
-    alg: &'static signature::EcdsaSigningAlgorithm,
-    key: &[u8],
-    message: &[u8],
-) -> Result<String> {
+pub fn sign(alg: &'static signature::EcdsaSigningAlgorithm, key: &[u8], message: &[u8]) -> Result<String> {
+    // ring 0.17 still constructs from pkcs8 with an RNG; signature operation accepts RNG
+    // ECDSA is deterministic internally but ring API keeps rng param; keep SystemRandom.
     let rng = rand::SystemRandom::new();
     let signing_key = signature::EcdsaKeyPair::from_pkcs8(alg, key, &rng)?;
     let out = signing_key.sign(&rng, message)?;
