@@ -34,6 +34,13 @@ cfg_if! {
         unsafe fn errno_location() -> *mut c_int {
             libc::_errnop()
         }
+    } else if #[cfg(target_os = "nto")] {
+        unsafe fn errno_location() -> *mut c_int {
+            extern "C" {
+                fn __errno() -> *mut c_int;
+            }
+            __errno()
+        }
     }
 }
 
@@ -59,8 +66,8 @@ impl Errno {
         desc(self)
     }
 
-    pub const fn from_i32(err: i32) -> Errno {
-        from_i32(err)
+    pub fn from_i32(err: i32) -> Errno {
+        consts::from_i32(err)
     }
 
     pub fn clear() {
@@ -3127,6 +3134,95 @@ mod consts {
             libc::EMULTIHOP => EMULTIHOP,
             libc::ENOLINK => ENOLINK,
             libc::EPROTO => EPROTO,
+            _ => UnknownErrno,
+        }
+    }
+}
+
+#[cfg(target_os = "nto")]
+mod consts {
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    #[repr(i32)]
+    #[non_exhaustive]
+    pub enum Errno {
+        UnknownErrno = 0,
+        EPERM = 1,
+        ENOENT = 2,
+        ESRCH = 3,
+        EINTR = 4,
+        EIO = 5,
+        ENXIO = 6,
+        E2BIG = 7,
+        ENOEXEC = 8,
+        EBADF = 9,
+        ECHILD = 10,
+        EAGAIN = 11,
+        ENOMEM = 12,
+        EACCES = 13,
+        EFAULT = 14,
+        ENOTBLK = 15,
+        EBUSY = 16,
+        EEXIST = 17,
+        EXDEV = 18,
+        ENODEV = 19,
+        ENOTDIR = 20,
+        EISDIR = 21,
+        EINVAL = 22,
+        ENFILE = 23,
+        EMFILE = 24,
+        ENOTTY = 25,
+        ETXTBSY = 26,
+        EFBIG = 27,
+        ENOSPC = 28,
+        ESPIPE = 29,
+        EROFS = 30,
+        EMLINK = 31,
+        EPIPE = 32,
+        EDOM = 33,
+        ERANGE = 34,
+        ENOTSUP = 95,
+    }
+
+    pub const EWOULDBLOCK: Errno = Errno::EAGAIN;
+
+    pub fn from_i32(e: i32) -> Errno {
+        use self::Errno::*;
+        match e {
+            1 => EPERM,
+            2 => ENOENT,
+            3 => ESRCH,
+            4 => EINTR,
+            5 => EIO,
+            6 => ENXIO,
+            7 => E2BIG,
+            8 => ENOEXEC,
+            9 => EBADF,
+            10 => ECHILD,
+            11 => EAGAIN,
+            12 => ENOMEM,
+            13 => EACCES,
+            14 => EFAULT,
+            15 => ENOTBLK,
+            16 => EBUSY,
+            17 => EEXIST,
+            18 => EXDEV,
+            19 => ENODEV,
+            20 => ENOTDIR,
+            21 => EISDIR,
+            22 => EINVAL,
+            23 => ENFILE,
+            24 => EMFILE,
+            25 => ENOTTY,
+            26 => ETXTBSY,
+            27 => EFBIG,
+            28 => ENOSPC,
+            29 => ESPIPE,
+            30 => EROFS,
+            31 => EMLINK,
+            32 => EPIPE,
+            33 => EDOM,
+            34 => ERANGE,
+            95 => ENOTSUP,
             _ => UnknownErrno,
         }
     }

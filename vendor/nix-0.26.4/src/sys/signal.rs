@@ -18,6 +18,7 @@ use std::str::FromStr;
 pub use self::sigevent::*;
 
 #[cfg(any(feature = "aio", feature = "process", feature = "signal"))]
+#[cfg(not(target_os = "nto"))]
 libc_enum! {
     /// Types of operating system signals
     // Currently there is only one definition of c_int in libc, as well as only one
@@ -115,7 +116,116 @@ libc_enum! {
     impl TryFrom<i32>
 }
 
+// QNX-specific signal enum with minimal signal set to avoid conflicts
+#[cfg(any(feature = "aio", feature = "process", feature = "signal"))]
+#[cfg(target_os = "nto")]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[repr(i32)]
+#[non_exhaustive]
+pub enum Signal {
+    /// Hangup
+    SIGHUP = 1,
+    /// Interrupt
+    SIGINT = 2,
+    /// Quit
+    SIGQUIT = 3,
+    /// Illegal instruction
+    SIGILL = 4,
+    /// Trace trap
+    SIGTRAP = 5,
+    /// Abort
+    SIGABRT = 6,
+    /// Bus error
+    SIGBUS = 10,
+    /// Floating point exception
+    SIGFPE = 8,
+    /// Kill
+    SIGKILL = 9,
+    /// User defined signal 1
+    SIGUSR1 = 16,
+    /// Segmentation violation
+    SIGSEGV = 11,
+    /// User defined signal 2
+    SIGUSR2 = 17,
+    /// Write on a pipe with no one to read it
+    SIGPIPE = 13,
+    /// Alarm clock
+    SIGALRM = 14,
+    /// Software termination signal from kill
+    SIGTERM = 15,
+    /// To parent on child stop or exit
+    SIGCHLD = 18,
+    /// Continue a stopped process
+    SIGCONT = 25,
+    /// Sendable stop signal not from tty
+    SIGSTOP = 23,
+    /// Stop signal from tty
+    SIGTSTP = 24,
+    /// To readers pgrp upon background tty read
+    SIGTTIN = 26,
+    /// Like TTIN if (tp->t_local&LTOSTOP)
+    SIGTTOU = 27,
+    /// Urgent condition on IO channel
+    SIGURG = 21,
+    /// Exceeded CPU time limit
+    SIGXCPU = 30,
+    /// Exceeded file size limit
+    SIGXFSZ = 31,
+    /// Virtual time alarm
+    SIGVTALRM = 28,
+    /// Profiling time alarm
+    SIGPROF = 29,
+    /// Window size changes
+    SIGWINCH = 20,
+    /// Input/output possible signal
+    SIGIO = 22,
+    /// Bad system call
+    SIGSYS = 12,
+}
+
+#[cfg(target_os = "nto")]
+impl std::convert::TryFrom<i32> for Signal {
+    type Error = crate::Error;
+
+    fn try_from(signum: i32) -> Result<Signal> {
+        use Signal::*;
+        Ok(match signum {
+            1 => SIGHUP,
+            2 => SIGINT,
+            3 => SIGQUIT,
+            4 => SIGILL,
+            5 => SIGTRAP,
+            6 => SIGABRT,
+            8 => SIGFPE,
+            9 => SIGKILL,
+            10 => SIGBUS,
+            11 => SIGSEGV,
+            12 => SIGSYS,
+            13 => SIGPIPE,
+            14 => SIGALRM,
+            15 => SIGTERM,
+            16 => SIGUSR1,
+            17 => SIGUSR2,
+            18 => SIGCHLD,
+            20 => SIGWINCH,
+            21 => SIGURG,
+            22 => SIGIO,
+            23 => SIGSTOP,
+            24 => SIGTSTP,
+            25 => SIGCONT,
+            26 => SIGTTIN,
+            27 => SIGTTOU,
+            28 => SIGVTALRM,
+            29 => SIGPROF,
+            30 => SIGXCPU,
+            31 => SIGXFSZ,
+            _ => return Err(crate::Error::from(crate::errno::Errno::EINVAL)),
+        })
+    }
+}
+
 #[cfg(feature = "signal")]
+#[cfg(not(target_os = "nto"))]
 impl FromStr for Signal {
     type Err = Error;
     fn from_str(s: &str) -> Result<Signal> {
@@ -195,6 +305,46 @@ impl FromStr for Signal {
 }
 
 #[cfg(feature = "signal")]
+#[cfg(target_os = "nto")]
+impl FromStr for Signal {
+    type Err = Error;
+    fn from_str(s: &str) -> Result<Signal> {
+        Ok(match s {
+            "SIGHUP" => Signal::SIGHUP,
+            "SIGINT" => Signal::SIGINT,
+            "SIGQUIT" => Signal::SIGQUIT,
+            "SIGILL" => Signal::SIGILL,
+            "SIGTRAP" => Signal::SIGTRAP,
+            "SIGABRT" => Signal::SIGABRT,
+            "SIGBUS" => Signal::SIGBUS,
+            "SIGFPE" => Signal::SIGFPE,
+            "SIGKILL" => Signal::SIGKILL,
+            "SIGUSR1" => Signal::SIGUSR1,
+            "SIGSEGV" => Signal::SIGSEGV,
+            "SIGUSR2" => Signal::SIGUSR2,
+            "SIGPIPE" => Signal::SIGPIPE,
+            "SIGALRM" => Signal::SIGALRM,
+            "SIGTERM" => Signal::SIGTERM,
+            "SIGCHLD" => Signal::SIGCHLD,
+            "SIGCONT" => Signal::SIGCONT,
+            "SIGSTOP" => Signal::SIGSTOP,
+            "SIGTSTP" => Signal::SIGTSTP,
+            "SIGTTIN" => Signal::SIGTTIN,
+            "SIGTTOU" => Signal::SIGTTOU,
+            "SIGURG" => Signal::SIGURG,
+            "SIGXCPU" => Signal::SIGXCPU,
+            "SIGXFSZ" => Signal::SIGXFSZ,
+            "SIGVTALRM" => Signal::SIGVTALRM,
+            "SIGPROF" => Signal::SIGPROF,
+            "SIGWINCH" => Signal::SIGWINCH,
+            "SIGIO" => Signal::SIGIO,
+            "SIGSYS" => Signal::SIGSYS,
+            _ => return Err(Errno::EINVAL),
+        })
+    }
+}
+
+#[cfg(feature = "signal")]
 impl Signal {
     /// Returns name of signal.
     ///
@@ -260,7 +410,8 @@ impl Signal {
                 target_os = "fuchsia",
                 target_os = "linux",
                 target_os = "redox",
-                target_os = "haiku"
+                target_os = "haiku",
+                target_os = "nto"
             )))]
             Signal::SIGEMT => "SIGEMT",
             #[cfg(not(any(
@@ -269,7 +420,8 @@ impl Signal {
                 target_os = "fuchsia",
                 target_os = "linux",
                 target_os = "redox",
-                target_os = "haiku"
+                target_os = "haiku",
+                target_os = "nto"
             )))]
             Signal::SIGINFO => "SIGINFO",
         }
@@ -354,11 +506,21 @@ const SIGNALS: [Signal; 30] = [
     target_os = "haiku"
 )))]
 #[cfg(feature = "signal")]
+#[cfg(not(target_os = "nto"))]
 const SIGNALS: [Signal; 31] = [
     SIGHUP, SIGINT, SIGQUIT, SIGILL, SIGTRAP, SIGABRT, SIGBUS, SIGFPE, SIGKILL,
     SIGUSR1, SIGSEGV, SIGUSR2, SIGPIPE, SIGALRM, SIGTERM, SIGCHLD, SIGCONT,
     SIGSTOP, SIGTSTP, SIGTTIN, SIGTTOU, SIGURG, SIGXCPU, SIGXFSZ, SIGVTALRM,
     SIGPROF, SIGWINCH, SIGIO, SIGSYS, SIGEMT, SIGINFO,
+];
+
+#[cfg(target_os = "nto")]
+#[cfg(feature = "signal")]
+const SIGNALS: [Signal; 29] = [
+    SIGHUP, SIGINT, SIGQUIT, SIGILL, SIGTRAP, SIGABRT, SIGBUS, SIGFPE, SIGKILL,
+    SIGUSR1, SIGSEGV, SIGUSR2, SIGPIPE, SIGALRM, SIGTERM, SIGCHLD, SIGCONT,
+    SIGSTOP, SIGTSTP, SIGTTIN, SIGTTOU, SIGURG, SIGXCPU, SIGXFSZ, SIGVTALRM,
+    SIGPROF, SIGWINCH, SIGIO, SIGSYS,
 ];
 
 feature! {
@@ -425,14 +587,16 @@ libc_bitflags! {
         /// Further occurrences of the delivered signal are not masked during
         /// the execution of the handler.
         SA_NODEFER;
-        /// The system will deliver the signal to the process on a signal stack,
-        /// specified by each thread with sigaltstack(2).
-        SA_ONSTACK;
+    /// The system will deliver the signal to the process on a signal stack,
+    /// specified by each thread with sigaltstack(2).
+    #[cfg(not(target_os = "nto"))]
+    SA_ONSTACK;
         /// The handler is reset back to the default at the moment the signal is
         /// delivered.
         SA_RESETHAND;
         /// Requests that certain system calls restart if interrupted by this
         /// signal.  See the man page for complete details.
+        #[cfg(not(target_os = "nto"))]
         SA_RESTART;
         /// This flag is controlled internally by Nix.
         SA_SIGINFO;
@@ -1268,7 +1432,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(target_os = "redox"))]
+    #[cfg(all(not(target_os = "redox"), not(target_os = "nto")))]
     fn test_sigaction() {
         thread::spawn(|| {
             extern "C" fn test_sigaction_handler(_: libc::c_int) {}

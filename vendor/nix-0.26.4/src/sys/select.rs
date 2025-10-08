@@ -292,7 +292,16 @@ where
     let sigmask = sigmask.map(|sm| sm.as_ref() as *const libc::sigset_t).unwrap_or(null());
 
     let res = unsafe {
-        libc::pselect(nfds, readfds, writefds, errorfds, timeout, sigmask)
+        #[cfg(target_os = "nto")]
+        {
+            // QNX pselect expects mutable timeout pointer
+            let timeout_mut = timeout as *mut libc::timespec;
+            libc::pselect(nfds, readfds, writefds, errorfds, timeout_mut, sigmask)
+        }
+        #[cfg(not(target_os = "nto"))]
+        {
+            libc::pselect(nfds, readfds, writefds, errorfds, timeout, sigmask)
+        }
     };
 
     Errno::result(res)

@@ -409,7 +409,8 @@ libc_enum! {
         #[cfg(any(target_os = "illumos", target_os = "solaris"))]
         #[cfg_attr(docsrs, doc(cfg(all())))]
         B153600,
-        B230400,
+    #[cfg(not(target_os = "nto"))]
+    B230400,
         #[cfg(any(target_os = "illumos", target_os = "solaris"))]
         #[cfg_attr(docsrs, doc(cfg(all())))]
         B307200,
@@ -881,9 +882,9 @@ libc_bitflags! {
         PARODD;
         HUPCL;
         CLOCAL;
-        #[cfg(not(target_os = "redox"))]
-        #[cfg_attr(docsrs, doc(cfg(all())))]
-        CRTSCTS;
+    #[cfg(all(not(target_os = "redox"), not(target_os = "nto")))]
+    #[cfg_attr(docsrs, doc(cfg(all())))]
+    CRTSCTS;
         #[cfg(any(target_os = "android", target_os = "linux"))]
         #[cfg_attr(docsrs, doc(cfg(all())))]
         CBAUD;
@@ -952,7 +953,8 @@ libc_bitflags! {
         ECHONL;
         #[cfg(not(target_os = "redox"))]
         #[cfg_attr(docsrs, doc(cfg(all())))]
-        ECHOPRT;
+    #[cfg(not(target_os = "nto"))]
+    ECHOPRT;
         #[cfg(not(target_os = "redox"))]
         #[cfg_attr(docsrs, doc(cfg(all())))]
         ECHOCTL;
@@ -969,11 +971,13 @@ libc_bitflags! {
         IEXTEN;
         #[cfg(not(any(target_os = "redox", target_os = "haiku")))]
         #[cfg_attr(docsrs, doc(cfg(all())))]
-        EXTPROC;
+    #[cfg(not(target_os = "nto"))]
+    EXTPROC;
         TOSTOP;
         #[cfg(not(target_os = "redox"))]
         #[cfg_attr(docsrs, doc(cfg(all())))]
-        FLUSHO;
+    #[cfg(not(target_os = "nto"))]
+    FLUSHO;
         #[cfg(any(target_os = "freebsd",
                   target_os = "dragonfly",
                   target_os = "ios",
@@ -984,7 +988,8 @@ libc_bitflags! {
         NOKERNINFO;
         #[cfg(not(target_os = "redox"))]
         #[cfg_attr(docsrs, doc(cfg(all())))]
-        PENDIN;
+    #[cfg(not(target_os = "nto"))]
+    PENDIN;
         NOFLSH;
     }
 }
@@ -1046,10 +1051,25 @@ cfg_if! {
         /// `cfsetspeed()` sets the input and output baud rate in the given termios structure. Note that
         /// this is part of the 4.4BSD standard and not part of POSIX.
         pub fn cfsetspeed<T: Into<u32>>(termios: &mut Termios, baud: T) -> Result<()> {
-            let inner_termios = unsafe { termios.get_libc_termios_mut() };
-            let res = unsafe { libc::cfsetspeed(inner_termios, baud.into() as libc::speed_t) };
-            termios.update_wrapper();
-            Errno::result(res).map(drop)
+            #[cfg(target_os = "nto")]
+            {
+                // Fallback: QNX libc has cfsetispeed/cfsetospeed but no cfsetspeed
+                let speed = baud.into() as libc::speed_t;
+                let inner_termios = unsafe { termios.get_libc_termios_mut() };
+                let r1 = unsafe { libc::cfsetispeed(inner_termios, speed) };
+                if r1 != 0 { return Err(Errno::last()); }
+                let r2 = unsafe { libc::cfsetospeed(inner_termios, speed) };
+                if r2 != 0 { return Err(Errno::last()); }
+                termios.update_wrapper();
+                return Ok(());
+            }
+            #[cfg(not(target_os = "nto"))]
+            {
+                let inner_termios = unsafe { termios.get_libc_termios_mut() };
+                let res = unsafe { libc::cfsetspeed(inner_termios, baud.into() as libc::speed_t) };
+                termios.update_wrapper();
+                Errno::result(res).map(drop)
+            }
         }
     } else {
         use std::convert::TryInto;
@@ -1101,10 +1121,25 @@ cfg_if! {
         /// this is part of the 4.4BSD standard and not part of POSIX.
         #[cfg(not(target_os = "haiku"))]
         pub fn cfsetspeed(termios: &mut Termios, baud: BaudRate) -> Result<()> {
-            let inner_termios = unsafe { termios.get_libc_termios_mut() };
-            let res = unsafe { libc::cfsetspeed(inner_termios, baud as libc::speed_t) };
-            termios.update_wrapper();
-            Errno::result(res).map(drop)
+            #[cfg(target_os = "nto")]
+            {
+                // QNX fallback: set input and output separately
+                let speed = baud as libc::speed_t;
+                let inner_termios = unsafe { termios.get_libc_termios_mut() };
+                let r1 = unsafe { libc::cfsetispeed(inner_termios, speed) };
+                if r1 != 0 { return Err(Errno::last()); }
+                let r2 = unsafe { libc::cfsetospeed(inner_termios, speed) };
+                if r2 != 0 { return Err(Errno::last()); }
+                termios.update_wrapper();
+                return Ok(());
+            }
+            #[cfg(not(target_os = "nto"))]
+            {
+                let inner_termios = unsafe { termios.get_libc_termios_mut() };
+                let res = unsafe { libc::cfsetspeed(inner_termios, baud as libc::speed_t) };
+                termios.update_wrapper();
+                Errno::result(res).map(drop)
+            }
         }
     }
 }
