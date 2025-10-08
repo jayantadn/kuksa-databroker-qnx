@@ -8,7 +8,7 @@
         "README.md": "1ed9a0e26ae6e575b3262ae734dd02889455593b761ee62403ea5a64104f3c9c",
         "src/dir.rs": "fa8d1de7e82409a40a70901294bb7875ea2b1f8054af2eb90b066650a67f4d0e",
         "src/env.rs": "028bc5e20139ebba418a655a2978a53335dc7680bf1de43d2c8333dd72cfa5c4",
-        "src/errno.rs": "99be4997162636bb86b728acf81897c49d09b6bd4b895a1e7311ef337b1505e2",
+        "src/errno.rs": "223e6e4c5bc46c412c8be1c73fdcbfe0ceb8666cacc437f6dd0cb26aad37e1a1",
         "src/fcntl.rs": "243eb14eb31c692f872c7f8cde5d82f654b072384400bda9bd783e13a3820021",
         "src/features.rs": "5b4a0831e5f4b79a6f0e42ed052fd66c875da18959750be51e41fb59ac19feed",
         "src/ifaddrs.rs": "377865eb48040d28c392a1aec0221320108e3392ea285d23405ae2cfa5c54b20",
