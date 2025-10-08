@@ -54,7 +54,7 @@
         "src/sys/statfs.rs": "17103659a85279bac046c69cb3b22bf2c11c2492cffb0edfa4c3b233d161a2f2",
         "src/sys/statvfs.rs": "f81e3900ef90d62e7eceaf1b6ff8dcfd965466714c033eb4717687f692171f48",
         "src/sys/sysinfo.rs": "b4519b1ca091c9dbe94d2a6fd6304944bf3df5626973d2c6884022559706f0d9",
-    "src/sys/termios.rs": "db56d04460fd01d5b635e41bf4dbd53a89ee4d4502b7921cd5587f2831afce51",
+    "src/sys/termios.rs": "fc5cc51d5e6e3bee172021c24ff899b6668bfd21a0a89c73872db1a6f6fbb058",
         "src/sys/time.rs": "9026033b60a5ccc95b70424aef043c8c748722e2ea8c7c86366ecd4585b651a0",
         "src/sys/timer.rs": "8c10f0e7cfac857ad00460be30bc68b957909cc9296e70718d3b5d4a0babafde",
         "src/sys/timerfd.rs": "ef7c48aefdcfac13316eeddbef5da04cf12e9f574b8d9f43402c02b6b8db86b3",

@@ -1150,10 +1150,43 @@ cfg_if! {
 /// `cfmakeraw()` configures the termios structure such that input is available character-by-
 /// character, echoing is disabled, and all special input and output processing is disabled. Note
 /// that this is a non-standard function, but is available on Linux and BSDs.
+#[cfg(not(target_os = "nto"))]
 pub fn cfmakeraw(termios: &mut Termios) {
     let inner_termios = unsafe { termios.get_libc_termios_mut() };
     unsafe {
         libc::cfmakeraw(inner_termios);
+    }
+    termios.update_wrapper();
+}
+
+// QNX (nto) does not have a libc::cfmakeraw binding in Rust's libc crate.
+// Provide a manual implementation approximating POSIX cfmakeraw and emit a runtime notice.
+#[cfg(target_os = "nto")]
+pub fn cfmakeraw(termios: &mut Termios) {
+    eprintln!("[nix termios] cfmakeraw fallback active for QNX (nto) target");
+    let inner_termios = unsafe { termios.get_libc_termios_mut() };
+    // SAFETY: We operate directly on the termios struct fields replicating cfmakeraw semantics.
+    unsafe {
+        let t = &mut *inner_termios;
+        // Disable input processing flags
+        t.c_iflag &= !(libc::IGNBRK
+            | libc::BRKINT
+            | libc::PARMRK
+            | libc::ISTRIP
+            | libc::INLCR
+            | libc::IGNCR
+            | libc::ICRNL
+            | libc::IXON);
+        // Disable all output post-processing
+        t.c_oflag &= !libc::OPOST;
+        // Local modes: disable echo, canonical mode, extended processing, and signals
+        t.c_lflag &= !(libc::ECHO | libc::ECHONL | libc::ICANON | libc::ISIG | libc::IEXTEN);
+        // Control modes: clear size & parity bits, then set 8-bit chars
+        t.c_cflag &= !(libc::CSIZE | libc::PARENB);
+        t.c_cflag |= libc::CS8;
+        // Control chars: minimum of 1 byte, no inter-character timer
+        t.c_cc[libc::VMIN as usize] = 1;
+        t.c_cc[libc::VTIME as usize] = 0;
     }
     termios.update_wrapper();
 }
