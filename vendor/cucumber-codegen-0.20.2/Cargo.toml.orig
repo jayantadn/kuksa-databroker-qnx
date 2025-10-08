@@ -1,0 +1,49 @@
+[package]
+name = "cucumber-codegen"
+version = "0.20.2" # should be the same as main crate version
+edition = "2021"
+rust-version = "1.70"
+description = "Code generation for `cucumber` crate."
+license = "MIT OR Apache-2.0"
+authors = [
+    "Ilya Solovyiov <ilya.solovyiov@gmail.com>",
+    "Kai Ren <tyranron@gmail.com>",
+]
+documentation = "https://docs.rs/cucumber-codegen"
+homepage = "https://github.com/cucumber-rs/cucumber/tree/main/codegen"
+repository = "https://github.com/cucumber-rs/cucumber"
+readme = "README.md"
+categories = ["asynchronous", "development-tools::testing"]
+keywords = ["cucumber", "codegen", "macros"]
+exclude = ["/tests/"]
+
+[lib]
+proc-macro = true
+
+[dependencies]
+cucumber-expressions = { version = "0.3", features = ["into-regex"] }
+inflections = "1.1"
+itertools = "0.12"
+proc-macro2 = "1.0.28"
+quote = "1.0.9"
+regex = "1.5.5"
+syn = { version = "2.0", features = ["derive", "extra-traits", "full"] }
+synthez = "0.3"
+
+[dev-dependencies]
+async-trait = "0.1"
+cucumber = { path = "..", features = ["libtest", "macros"] }
+derive_more = "0.99.17"
+futures = "0.3.17"
+tempfile = "3.2"
+tokio = { version = "1.12", features = ["macros", "rt-multi-thread", "time"] }
+
+[[test]]
+name = "example"
+path = "tests/example.rs"
+harness = false
+
+[[test]]
+name = "two_worlds"
+path = "tests/two_worlds.rs"
+harness = false

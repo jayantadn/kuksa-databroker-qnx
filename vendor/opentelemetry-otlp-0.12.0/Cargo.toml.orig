@@ -1,0 +1,88 @@
+[package]
+name = "opentelemetry-otlp"
+version = "0.12.0"
+description = "Exporter for the OpenTelemetry Collector"
+homepage = "https://github.com/open-telemetry/opentelemetry-rust/tree/main/opentelemetry-otlp"
+repository = "https://github.com/open-telemetry/opentelemetry-rust/tree/main/opentelemetry-otlp"
+readme = "README.md"
+categories = [
+    "development-tools::debugging",
+    "development-tools::profiling",
+    "asynchronous",
+]
+keywords = ["opentelemetry", "otlp", "logging", "tracing", "metrics"]
+license = "Apache-2.0"
+edition = "2021"
+rust-version = "1.60"
+autotests = false
+
+[lib]
+doctest = false
+
+[[test]]
+name = "smoke"
+path = "tests/smoke.rs"
+required-features = ["integration-testing"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+async-trait = "0.1"
+futures = { version = "0.3", default-features = false, features = ["std"] }
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+
+opentelemetry-proto = { version = "0.2", path = "../opentelemetry-proto", default-features = false }
+
+grpcio = { version = "0.12", optional = true }
+opentelemetry = { version = "0.19", default-features = false, features = ["trace"], path = "../opentelemetry" }
+opentelemetry-http = { version = "0.8", path = "../opentelemetry-http", optional = true }
+protobuf = { version = "2.18", optional = true }
+
+prost = { version = "0.11.0", optional = true }
+tonic = { version = "0.8.0", optional = true }
+tokio = { version = "1.0", features = ["sync", "rt"], optional = true }
+
+reqwest = { version = "0.11", optional = true, default-features = false }
+surf = { version = "2.0", optional = true, default-features = false }
+http = { version = "0.2", optional = true }
+serde = { version = "1.0", features = ["derive"], optional = true }
+thiserror = "1.0"
+
+[dev-dependencies]
+tokio-stream = { version = "0.1", features = ["net"] }
+# need tokio runtime to run smoke tests.
+opentelemetry = { features = ["trace", "rt-tokio", "testing"], path = "../opentelemetry" }
+time = { version = "0.3", features = ["macros"] }
+tokio = { version = "1.0", features = ["macros", "rt-multi-thread"] }
+
+[features]
+# telemetry pillars and functions
+trace = ["opentelemetry/trace", "opentelemetry-proto/traces"]
+metrics = ["opentelemetry/metrics", "opentelemetry-proto/metrics", "grpc-tonic"]
+
+# add ons
+serialize = ["serde"]
+
+default = ["grpc-tonic", "trace"]
+
+# grpc using tonic
+grpc-tonic = ["tonic", "prost", "http", "tokio", "opentelemetry-proto/gen-tonic"]
+tls = ["tonic/tls"]
+tls-roots = ["tls", "tonic/tls-roots"]
+
+# grpc using grpcio
+grpc-sys = ["grpcio", "opentelemetry-proto/gen-protoc", "protobuf"]
+openssl = ["grpcio/openssl"]
+openssl-vendored = ["grpcio/openssl-vendored"]
+
+# http binary
+http-proto = ["prost", "opentelemetry-http", "opentelemetry-proto/gen-tonic", "http", "trace"]
+reqwest-blocking-client = ["reqwest/blocking", "opentelemetry-http/reqwest"]
+reqwest-client = ["reqwest", "opentelemetry-http/reqwest"]
+reqwest-rustls = ["reqwest", "reqwest/rustls-tls-native-roots"]
+surf-client = ["surf", "opentelemetry-http/surf"]
+
+# test
+integration-testing = ["tonic", "prost", "tokio/full", "trace"]
