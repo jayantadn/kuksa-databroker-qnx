@@ -96,19 +96,6 @@ pub async fn sdv_main(_cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     let mut properties = Vec::<proto::v1::Metadata>::new();
     println!("Using {VERSION}");
     let mut cli = _cli;
-
-    let mut subscription_nbr = 1;
-
-    let completer = CliCompleter::new();
-    let interface = Arc::new(Interface::new("client")?);
-    interface.set_completer(Arc::new(completer));
-
-    interface.define_function("enter-function", Arc::new(cli::EnterFunction));
-    interface.bind_sequence("\r", Command::from_str("enter-function"));
-    interface.bind_sequence("\n", Command::from_str("enter-function"));
-
-    cli::set_disconnected_prompt(&interface);
-
     let mut client = SDVClient::new(kuksa_common::to_uri(cli.get_server())?);
 
     if let Some(token_filename) = cli.get_token_file() {
@@ -126,31 +113,6 @@ pub async fn sdv_main(_cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         client.basic_client.set_tls_config(tls_config);
     }
 
-    let mut connection_state_subscription = client.basic_client.subscribe_to_connection_state();
-    let interface_ref = interface.clone();
-
-    tokio::spawn(async move {
-        while let Some(state) = connection_state_subscription.next().await {
-            match state {
-                Ok(state) => match state {
-                    kuksa_common::ConnectionState::Connected => {
-                        cli::set_connected_prompt(&interface_ref, VERSION.to_string());
-                    }
-                    kuksa_common::ConnectionState::Disconnected => {
-                        cli::set_disconnected_prompt(&interface_ref);
-                    }
-                },
-                Err(err) => {
-                    cli::print_error(
-                        "connection",
-                        format!("Connection state subscription failed: {err}"),
-                    )
-                    .unwrap_or_default();
-                }
-            }
-        }
-    });
-
     match cli.get_command() {
         Some(cli::Commands::Get { paths }) => {
             return handle_get_command(paths, &mut client).await;
@@ -164,53 +126,37 @@ pub async fn sdv_main(_cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         Some(cli::Commands::Actuate { path: _, value: _ }) => {
             unimplemented!("The actuate command is not implemented for sdv.databroker.v1 protocol because it is already deprecated.");
         }
-        None => {
-            // No subcommand => run interactive client
-            let version = match option_env!("CARGO_PKG_VERSION") {
-                Some(version) => format!("v{version}"),
-                None => String::new(),
-            };
-            cli::print_logo(version);
-
-            match client.basic_client.try_connect().await {
-                Ok(()) => {
-                    cli::print_info(format!(
-                        "Successfully connected to {}",
-                        client.basic_client.get_uri()
-                    ))?;
-
-                    let pattern = vec![];
-
-                    match client.get_metadata(pattern).await {
-                        Ok(metadata) => {
-                            interface
-                                .set_completer(Arc::new(CliCompleter::from_metadata(&metadata)));
-                            properties = metadata;
-                        }
-                        Err(kuksa_common::ClientError::Status(status)) => {
-                            cli::print_resp_err("metadata", &status)?;
-                        }
-                        Err(kuksa_common::ClientError::Connection(msg)) => {
-                            cli::print_error("metadata", msg)?;
-                        }
-                        Err(kuksa_common::ClientError::Function(msg)) => {
-                            cli::print_resp_err_fmt("metadata", format_args!("Error {msg:?}"))?;
-                        }
-                    }
-                }
-                Err(err) => {
-                    cli::print_error("connect", format!("{err}"))?;
-                }
-            }
-        }
+        None => { /* fall through to interactive */ }
     };
+    let use_plain = cli.get_plain() || std::env::var_os("KUKSA_CLI_PLAIN").is_some();
+    if use_plain { return run_plain_interactive(cli, client, properties).await; }
+
+    // Advanced interactive mode
+    let mut subscription_nbr = 1;
+    let completer = CliCompleter::new();
+    let interface = match Interface::new("client") { Ok(i) => Arc::new(i), Err(e) => { eprintln!("(terminal init failed: {e}) falling back to plain mode"); return run_plain_interactive(cli, client, properties).await; } };
+    interface.set_completer(Arc::new(completer));
+    interface.define_function("enter-function", Arc::new(cli::EnterFunction));
+    interface.bind_sequence("\r", Command::from_str("enter-function"));
+    interface.bind_sequence("\n", Command::from_str("enter-function"));
+    cli::set_disconnected_prompt(&interface);
+    let version = match option_env!("CARGO_PKG_VERSION") { Some(v) => format!("v{v}"), None => String::new() };
+    cli::print_logo(version);
+    match client.basic_client.try_connect().await {
+        Ok(()) => {
+            cli::print_info(format!("Successfully connected to {}", client.basic_client.get_uri()))?;
+            match client.get_metadata(vec![]).await { Ok(metadata) => { interface.set_completer(Arc::new(CliCompleter::from_metadata(&metadata))); properties = metadata; }, Err(kuksa_common::ClientError::Status(status)) => { cli::print_resp_err("metadata", &status)?; }, Err(kuksa_common::ClientError::Connection(msg)) => { cli::print_error("metadata", msg)?; }, Err(kuksa_common::ClientError::Function(msg)) => { cli::print_resp_err_fmt("metadata", format_args!("Error {msg:?}"))?; } }
+        }
+        Err(err) => { cli::print_error("connect", format!("{err}"))?; }
+    }
+    let mut connection_state_subscription = client.basic_client.subscribe_to_connection_state();
+    let interface_ref = interface.clone();
+    tokio::spawn(async move {
+        while let Some(state) = connection_state_subscription.next().await { match state { Ok(state) => match state { kuksa_common::ConnectionState::Connected => { cli::set_connected_prompt(&interface_ref, VERSION.to_string()); }, kuksa_common::ConnectionState::Disconnected => { cli::set_disconnected_prompt(&interface_ref); } }, Err(err) => { cli::print_error("connection", format!("Connection state subscription failed: {err}")) .unwrap_or_default(); } } }
+    });
 
     loop {
-        if let Some(res) = interface.read_line_step(Some(TIMEOUT))? {
-            match res {
-                ReadResult::Input(line) => {
-                    let (cmd, args) = cli::split_first_word(&line);
-                    match cmd {
+        if let Some(res) = interface.read_line_step(Some(TIMEOUT))? { match res { ReadResult::Input(line) => { let (cmd, args) = cli::split_first_word(&line); match cmd {
                         "help" => {
                             println!();
                             for &(cmd, args, help) in CLI_COMMANDS {
@@ -742,10 +688,7 @@ pub async fn sdv_main(_cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                                 }
                             }
                         }
-                        "quit" | "exit" => {
-                            println!("Bye bye!");
-                            break Ok(());
-                        }
+                        "quit" | "exit" => { println!("Bye bye!"); break Ok(()); }
                         "" => {} // Ignore empty input
                         _ => {
                             println!(
@@ -770,6 +713,22 @@ pub async fn sdv_main(_cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
+}
+
+// Plain interactive loop (no linefeed)
+async fn run_plain_interactive(mut cli: Cli, mut client: SDVClient, mut properties: Vec<proto::v1::Metadata>) -> Result<(), Box<dyn std::error::Error>> {
+    use std::io::{self, Write};
+    let mut subscription_nbr = 1;
+    let stdin = io::stdin();
+    let mut stdout = io::stdout();
+    let version = match option_env!("CARGO_PKG_VERSION") { Some(v) => format!("v{v}"), None => String::new() };
+    cli::print_logo(version);
+    match client.basic_client.try_connect().await { Ok(()) => { cli::print_info(format!("Successfully connected to {}", client.basic_client.get_uri()))?; match client.get_metadata(vec![]).await { Ok(metadata) => { properties = metadata; }, Err(_) => {} } }, Err(err) => { cli::print_error("connect", format!("{err}"))?; } }
+    let mut connection_state_subscription = client.basic_client.subscribe_to_connection_state();
+    tokio::spawn(async move { while let Some(state) = connection_state_subscription.next().await { match state { Ok(state) => match state { kuksa_common::ConnectionState::Connected => eprintln!("[connection] connected"), kuksa_common::ConnectionState::Disconnected => eprintln!("[connection] disconnected"), }, Err(err) => { let _ = cli::print_error("connection", format!("Connection state subscription failed: {err}")); } } } });
+    let mut line = String::new();
+    loop { line.clear(); write!(stdout, "client> ")?; stdout.flush()?; if stdin.read_line(&mut line)? == 0 { println!("Bye bye!"); break; } let (cmd, args) = cli::split_first_word(line.trim_end_matches(['\n','\r'])); match cmd { "help" => { println!(); for &(cmd, a, help) in CLI_COMMANDS { println!("  {:24} {}", format!("{cmd} {a}"), help); } println!(); }, "get" => { if args.is_empty() { print_usage(cmd); continue; } let paths = args.split_whitespace().map(|p| p.to_string()).collect(); handle_get_command(paths, &mut client).await?; }, "set" => { let (path, value) = cli::split_first_word(args); if value.is_empty() { print_usage(cmd); continue; } let datapoint_metadata = properties.iter().find(|m| m.name == path); if let Some(metadata) = datapoint_metadata { let data_value = try_into_data_value(value, proto::v1::DataType::try_from(metadata.data_type).unwrap()); if data_value.is_err() { println!("Could not parse \"{value}\" as {:?}", proto::v1::DataType::try_from(metadata.data_type).unwrap()); continue; } if metadata.entry_type != proto::v1::EntryType::Actuator as i32 { cli::print_error(cmd, format!("{} is not an actuator.", metadata.name))?; continue; } let ts = Timestamp::from(SystemTime::now()); let datapoints = HashMap::from([(metadata.name.clone(), proto::v1::Datapoint { timestamp: Some(ts), value: Some(data_value.unwrap()), })]); match client.set_datapoints(datapoints).await { Ok(message) => { if message.errors.is_empty() { cli::print_resp_ok(cmd)?; } else { for (id, error) in message.errors { match proto::v1::DatapointError::try_from(error) { Ok(error) => { cli::print_resp_ok(cmd)?; println!("Error setting {}: {}", id, Color::Red.paint(format!("{error:?}"))); }, Err(_) => cli::print_resp_ok_fmt(cmd, format_args!("Error setting id {id}"))?, } } } }, Err(kuksa_common::ClientError::Status(status)) => { cli::print_resp_err(cmd, &status)? }, Err(kuksa_common::ClientError::Connection(msg)) => { cli::print_error(cmd, msg)? }, Err(kuksa_common::ClientError::Function(msg)) => { cli::print_resp_err_fmt(cmd, format_args!("Error {msg:?}"))? } } } else { cli::print_info(format!("No metadata available for {path}. Needed to determine data type for serialization."))?; } }, "publish" => { println!("Command deprecated in sdv.databroker.v1"); }, "subscribe" => { if args.is_empty() { print_usage(cmd); continue; } let input = args.to_owned(); match client.subscribe(input).await { Ok(mut subscription) => { let sub_id = subscription_nbr; subscription_nbr += 1; cli::print_resp_ok(cmd)?; cli::print_info(format!("Subscription running as [{sub_id}]"))?; tokio::spawn(async move { while let Ok(Some(resp)) = subscription.message().await { for (name, value) in resp.fields { println!("[{sub_id}] {}: {}", name, DisplayDatapoint(value)); } } }); }, Err(kuksa_common::ClientError::Status(status)) => { cli::print_resp_err(cmd, &status)? }, Err(kuksa_common::ClientError::Connection(msg)) => { cli::print_error(cmd, msg)? }, Err(kuksa_common::ClientError::Function(msg)) => { cli::print_resp_err_fmt(cmd, format_args!("Error {msg:?}"))? } } }, "metadata" => { match client.get_metadata(vec![]).await { Ok(mut metadata) => { metadata.sort_by(|a,b| a.name.cmp(&b.name)); properties = metadata; cli::print_resp_ok(cmd)?; }, Err(kuksa_common::ClientError::Status(status)) => { cli::print_resp_err(cmd, &status)?; continue; }, Err(kuksa_common::ClientError::Connection(msg)) => { cli::print_error(cmd, msg)?; continue; }, Err(kuksa_common::ClientError::Function(msg)) => { cli::print_resp_err_fmt(cmd, format_args!("Error {msg:?}"))?; continue; } } }, "token" => { if args.is_empty() { print_usage(cmd); continue; } match client.basic_client.set_access_token(args) { Ok(()) => { cli::print_info("Access token set.")?; }, Err(err) => { cli::print_error(cmd, format!("Malformed token: {err}"))?; } } }, "token-file" => { if args.is_empty() { print_usage(cmd); continue; } let token_filename = args.trim(); match std::fs::read_to_string(token_filename) { Ok(token) => match client.basic_client.set_access_token(token) { Ok(()) => { cli::print_info("Access token set.")?; }, Err(err) => { cli::print_error(cmd, format!("Malformed token: {err}"))?; } }, Err(err) => cli::print_error(cmd, format!("Failed to open token file \"{token_filename}\": {err}"))? } }, "connect" => { if !client.basic_client.is_connected() || !args.is_empty() { if args.is_empty() { match client.basic_client.try_connect().await { Ok(()) => cli::print_info(format!("[{cmd}] Successfully connected to {}", client.basic_client.get_uri()))?, Err(err) => { cli::print_error(cmd, format!("{err}"))?; } } } else { match cli::to_uri(args) { Ok(valid_uri) => match client.basic_client.try_connect_to(valid_uri).await { Ok(()) => cli::print_info(format!("[{cmd}] Successfully connected to {}", client.basic_client.get_uri()))?, Err(err) => { cli::print_error(cmd, format!("{err}"))?; } }, Err(err) => { cli::print_error(cmd, format!("Failed to parse endpoint address: {err}"))?; } } } } }, "quit" | "exit" => { println!("Bye bye!"); break; }, "" => {}, _ => { println!("Unknown command. See `help` for a list of available commands."); } } }
+    Ok(())
 }
 
 struct CliCompleter {

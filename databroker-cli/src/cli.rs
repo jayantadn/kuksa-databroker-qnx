@@ -58,6 +58,10 @@ pub struct Cli {
     // Sub command
     #[clap(subcommand)]
     command: Option<Commands>,
+
+    /// Plain mode: disable advanced line editing (avoids terminfo dependency)
+    #[clap(long, display_order = 50)]
+    plain: bool,
 }
 
 impl Cli {
@@ -80,6 +84,10 @@ impl Cli {
 
     pub fn get_protocol(&mut self) -> Protocol {
         self.protocol
+    }
+
+    pub fn get_plain(&self) -> bool {
+        self.plain
     }
 }
 

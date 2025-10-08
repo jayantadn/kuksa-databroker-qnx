@@ -246,18 +246,6 @@ async fn handle_get_command(
 pub async fn kuksa_main(_cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     println!("Using {VERSION}");
 
-    let mut subscription_nbr = 1;
-
-    let completer = CliCompleter::new();
-    let interface = Arc::new(Interface::new("client")?);
-    interface.set_completer(Arc::new(completer));
-
-    interface.define_function("enter-function", Arc::new(cli::EnterFunction));
-    interface.bind_sequence("\r", Command::from_str("enter-function"));
-    interface.bind_sequence("\n", Command::from_str("enter-function"));
-
-    cli::set_disconnected_prompt(&interface);
-
     let mut cli = _cli;
     let mut client = KuksaClient::new(kuksa_common::to_uri(cli.get_server())?);
 
@@ -276,9 +264,65 @@ pub async fn kuksa_main(_cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         client.basic_client.set_tls_config(tls_config);
     }
 
+    match cli.get_command() {
+        Some(cli::Commands::Get { paths }) => {
+            return handle_get_command(paths, &mut client).await;
+        }
+        Some(cli::Commands::Set { path: _, value: _ }) => {
+            unimplemented!("The set command is not implemented for kuksa.val.v1 protocol because it is not intended to be named like this anymore. Use publish instead.");
+        }
+        Some(cli::Commands::Actuate { path, value }) => {
+            return handle_actuate_command(&path, &value, &mut client).await;
+        }
+        Some(cli::Commands::Publish { path, value }) => {
+            return handle_publish_command(&path, &value, &mut client).await;
+        }
+        None => { /* fall through to interactive below */ }
+    };
+    // If we reach here, we are in interactive mode (no subcommand invoked)
+    let use_plain = cli.get_plain() || std::env::var_os("KUKSA_CLI_PLAIN").is_some();
+    if use_plain {
+        return run_plain_interactive(cli, client).await;
+    }
+
+    // Advanced (linefeed) interactive mode
+    let mut subscription_nbr = 1;
+    let completer = CliCompleter::new();
+    let interface = match Interface::new("client") {
+        Ok(iface) => Arc::new(iface),
+        Err(e) => {
+            eprintln!("(terminal init failed: {e}) falling back to plain mode");
+            return run_plain_interactive(cli, client).await;
+        }
+    };
+    interface.set_completer(Arc::new(completer));
+    interface.define_function("enter-function", Arc::new(cli::EnterFunction));
+    interface.bind_sequence("\r", Command::from_str("enter-function"));
+    interface.bind_sequence("\n", Command::from_str("enter-function"));
+    cli::set_disconnected_prompt(&interface);
+
+    // Print logo/version header
+    let version = match option_env!("CARGO_PKG_VERSION") {
+        Some(version) => format!("v{version}"),
+        None => String::new(),
+    };
+    cli::print_logo(version);
+    match client.basic_client.try_connect().await {
+        Ok(()) => {
+            cli::print_info(format!(
+                "Successfully connected to {}",
+                client.basic_client.get_uri()
+            ))?;
+            if let Some(entries) = handle_get_metadata(vec!["**"], &mut client).await? {
+                interface.set_completer(Arc::new(CliCompleter::from_metadata(&entries)));
+            }
+        }
+        Err(err) => { cli::print_error("connect", format!("{err}"))?; }
+    }
+
+    // Spawn connection state listener
     let mut connection_state_subscription = client.basic_client.subscribe_to_connection_state();
     let interface_ref = interface.clone();
-
     tokio::spawn(async move {
         while let Some(state) = connection_state_subscription.next().await {
             match state {
@@ -300,48 +344,6 @@ pub async fn kuksa_main(_cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     });
-
-    match cli.get_command() {
-        Some(cli::Commands::Get { paths }) => {
-            return handle_get_command(paths, &mut client).await;
-        }
-        Some(cli::Commands::Set { path: _, value: _ }) => {
-            unimplemented!("The set command is not implemented for kuksa.val.v1 protocol because it is not intended to be named like this anymore. Use publish instead.");
-        }
-        Some(cli::Commands::Actuate { path, value }) => {
-            return handle_actuate_command(&path, &value, &mut client).await;
-        }
-        Some(cli::Commands::Publish { path, value }) => {
-            return handle_publish_command(&path, &value, &mut client).await;
-        }
-        None => {
-            // No subcommand => run interactive client
-            let version = match option_env!("CARGO_PKG_VERSION") {
-                Some(version) => format!("v{version}"),
-                None => String::new(),
-            };
-            cli::print_logo(version);
-
-            match client.basic_client.try_connect().await {
-                Ok(()) => {
-                    cli::print_info(format!(
-                        "Successfully connected to {}",
-                        client.basic_client.get_uri()
-                    ))?;
-
-                    let pattern = vec!["**"];
-
-                    let data_entries = handle_get_metadata(pattern, &mut client).await?;
-                    if let Some(entries) = data_entries {
-                        interface.set_completer(Arc::new(CliCompleter::from_metadata(&entries)));
-                    }
-                }
-                Err(err) => {
-                    cli::print_error("connect", format!("{err}"))?;
-                }
-            }
-        }
-    };
 
     loop {
         if let Some(res) = interface.read_line_step(Some(TIMEOUT))? {
@@ -720,10 +722,7 @@ pub async fn kuksa_main(_cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                                 }
                             }
                         }
-                        "quit" | "exit" => {
-                            println!("Bye bye!");
-                            break;
-                        }
+                        "quit" | "exit" => { println!("Bye bye!"); break; }
                         "" => {} // Ignore empty input
                         _ => {
                             println!(
@@ -749,6 +748,132 @@ pub async fn kuksa_main(_cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    Ok(())
+}
+
+// Plain (no line editing / terminfo) interactive loop
+async fn run_plain_interactive(
+    mut cli: Cli,
+    mut client: KuksaClient,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use std::io::{self, Write};
+    let mut subscription_nbr = 1;
+    let stdin = io::stdin();
+    let mut stdout = io::stdout();
+    let version = match option_env!("CARGO_PKG_VERSION") {
+        Some(version) => format!("v{version}"),
+        None => String::new(),
+    };
+    cli::print_logo(version);
+    match client.basic_client.try_connect().await {
+        Ok(()) => {
+            cli::print_info(format!(
+                "Successfully connected to {}",
+                client.basic_client.get_uri()
+            ))?;
+        }
+        Err(err) => { cli::print_error("connect", format!("{err}"))?; }
+    }
+    let mut connection_state_subscription = client.basic_client.subscribe_to_connection_state();
+    tokio::spawn(async move {
+        while let Some(state) = connection_state_subscription.next().await {
+            match state {
+                Ok(state) => match state {
+                    kuksa_common::ConnectionState::Connected => {
+                        eprintln!("[connection] connected");
+                    }
+                    kuksa_common::ConnectionState::Disconnected => {
+                        eprintln!("[connection] disconnected");
+                    }
+                },
+                Err(err) => {
+                    let _ = cli::print_error(
+                        "connection",
+                        format!("Connection state subscription failed: {err}"),
+                    );
+                }
+            }
+        }
+    });
+
+    let mut line = String::new();
+    loop {
+        line.clear();
+        write!(stdout, "client> ")?; stdout.flush()?;
+        if stdin.read_line(&mut line)? == 0 { println!("Bye bye!"); break; }
+        let (cmd, args) = cli::split_first_word(line.trim_end_matches(['\n','\r']));
+        match cmd {
+            "help" => {
+                println!();
+                for &(cmd, args, help) in CLI_COMMANDS { println!("  {:24} {}", format!("{cmd} {args}"), help); }
+                println!();
+            }
+            "get" => {
+                if args.is_empty() { print_usage(cmd); continue; }
+                let paths = args.split_whitespace().map(|p| p.to_string()).collect();
+                handle_get_command(paths, &mut client).await?;
+            }
+            "gettarget" => {
+                if args.is_empty() { print_usage(cmd); continue; }
+                let paths = args.split_whitespace().map(|p| p.to_string()).collect();
+                match client.get_target_values(paths).await {
+                    Ok(data_entries) => {
+                        cli::print_resp_ok(cmd)?;
+                        for entry in data_entries { if let Some(val) = entry.actuator_target { println!("{}: {} {}", entry.path, DisplayDatapoint(val), entry.metadata.and_then(|m| m.unit).map(|u| u.to_string()).unwrap_or_default()); } else { println!("{} is not an actuator.", entry.path); } }
+                    }
+                    Err(kuksa_common::ClientError::Status(err)) => { cli::print_resp_err(cmd, &err)?; }
+                    Err(kuksa_common::ClientError::Connection(msg)) => { cli::print_error(cmd, msg)?; }
+                    Err(kuksa_common::ClientError::Function(msg)) => { cli::print_resp_err_fmt(cmd, format_args!("Error {msg:?}"))?; }
+                }
+            }
+            "actuate" => {
+                let (path, value) = cli::split_first_word(args);
+                if value.is_empty() { print_usage(cmd); continue; }
+                handle_actuate_command(path, value, &mut client).await?;
+            }
+            "publish" => {
+                let (path, value) = cli::split_first_word(args);
+                if value.is_empty() { print_usage(cmd); continue; }
+                handle_publish_command(path, value, &mut client).await?;
+            }
+            "subscribe" => {
+                if args.is_empty() { print_usage(cmd); continue; }
+                let input = args.split_whitespace().collect::<Vec<_>>();
+                match client.subscribe(input.iter().map(|s| s.to_string()).collect()).await {
+                    Ok(mut subscription) => {
+                        let sub_id = subscription_nbr; subscription_nbr += 1;
+                        cli::print_resp_ok(cmd)?; cli::print_info(format!("Subscription running as [{sub_id}]"))?;
+                        tokio::spawn(async move {
+                            while let Ok(Some(resp)) = subscription.message().await { for update in resp.updates { if let Some(entry) = update.entry { if let Some(value) = entry.value { println!("[{sub_id}] {}: {} {}", entry.path, DisplayDatapoint(value), entry.metadata.and_then(|m| m.unit).map(|u| u.to_string()).unwrap_or_default()); } } } }
+                        });
+                    }
+                    Err(kuksa_common::ClientError::Status(status)) => { cli::print_resp_err(cmd, &status)?; }
+                    Err(kuksa_common::ClientError::Connection(msg)) => { cli::print_error(cmd, msg)?; }
+                    Err(kuksa_common::ClientError::Function(msg)) => { cli::print_resp_err_fmt(cmd, format_args!("Error {msg:?}"))?; }
+                }
+            }
+            "metadata" => {
+                let paths = args.split_whitespace().collect::<Vec<_>>();
+                if paths.is_empty() { cli::print_info("If you want to list metadata of signals, use `metadata PATTERN`")?; continue; }
+                if let Some(entries) = handle_get_metadata(paths, &mut client).await? { cli::print_resp_ok(cmd)?; if !entries.is_empty() { let max_len_path = entries.iter().fold(0, |m,e| m.max(e.path.len())); cli::print_info(format!("{:<max_len_path$} {:<10} {:<9}", "Path", "Entry type", "Data type"))?; for entry in &entries { if let Some(entry_metadata) = &entry.metadata { println!("{:<max_len_path$} {:<10} {:<9}", entry.path, DisplayEntryType::from(proto::v1::EntryType::try_from(entry_metadata.entry_type).ok()), DisplayDataType::from(proto::v1::DataType::try_from(entry_metadata.data_type).ok())); } } } }
+            }
+            "token" => {
+                if args.is_empty() { print_usage(cmd); continue; }
+                match client.basic_client.set_access_token(args) { Ok(()) => { cli::print_info("Access token set.")?; }, Err(err) => { cli::print_error(cmd, format!("Malformed token: {err}"))?; } }
+            }
+            "token-file" => {
+                if args.is_empty() { print_usage(cmd); continue; }
+                let token_filename = args.trim();
+                match std::fs::read_to_string(token_filename) { Ok(token) => match client.basic_client.set_access_token(token) { Ok(()) => { cli::print_info("Access token set.")?; }, Err(err) => { cli::print_error(cmd, format!("Malformed token: {err}"))?; } }, Err(err) => cli::print_error(cmd, format!("Failed to open token file \"{token_filename}\": {err}"))? }
+            }
+            "connect" => {
+                if !client.basic_client.is_connected() || !args.is_empty() { if args.is_empty() { match client.basic_client.try_connect().await { Ok(()) => cli::print_info(format!("[{cmd}] Successfully connected to {}", client.basic_client.get_uri()))?, Err(err) => { cli::print_error(cmd, format!("{err}"))?; } } } else { match kuksa_common::to_uri(args) { Ok(valid_uri) => match client.basic_client.try_connect_to(valid_uri).await { Ok(()) => cli::print_info(format!("[{cmd}] Successfully connected to {}", client.basic_client.get_uri()))?, Err(err) => { cli::print_error(cmd, format!("{err}"))?; } }, Err(err) => { cli::print_error(cmd, format!("Failed to parse endpoint address: {err}"))?; } } } }
+            }
+            "quit" | "exit" => { println!("Bye bye!"); break; }
+            "" => {}
+            _ => { println!("Unknown command. See `help` for a list of available commands."); }
+        }
+    }
     Ok(())
 }
 
